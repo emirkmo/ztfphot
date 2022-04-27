@@ -5,4 +5,4 @@ __pycache__/
 
 *.png
 
-tests/output/
+tests/output/*.ecsv

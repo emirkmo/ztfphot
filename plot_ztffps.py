@@ -29,9 +29,10 @@ def make_ztf_lc(fpath: str, jd_first: Optional[float] = None, verify_references:
     return lc
 
 
-def plot_and_save_lc(jd_first_epoch: float, jd_min: float, jd_max: float, filename: str, snname: str):
+def plot_and_save_lc(jd_first_epoch: float, jd_min: float, jd_max: float, filename: str, snname: str,
+    verify_references:bool = False):
 
-    lc = make_ztf_lc(filename, jd_first_epoch)
+    lc = make_ztf_lc(filename, jd_first_epoch, verify_references=verify_references)
     bands = [lc.g, lc.r, lc.i]
 
     for band in bands:
@@ -48,7 +49,7 @@ def plot_and_save_lc(jd_first_epoch: float, jd_min: float, jd_max: float, filena
         detections = band[~band.islimit]  # type: ignore
         limits = band[band.islimit]  # type: ignore
         fig, ax = detections.plot("jd", "mag", yerr="mag_err", kind=PlotType.errorbar)
-        limits.plot("jd", "lim", kind=PlotType.scatter, ax=ax)
+        limits.plot("jd", "lim", kind=PlotType.scatter, ax=ax, plot_kwargs={'marker':'v'})
         plt.xlim(2458976, 2459120)
         plt.gca().invert_yaxis()
         fig.savefig(f"{OUTPUTDIR}{snname}_{band['filter'][0]}.png")
@@ -77,6 +78,6 @@ if __name__ == "__main__":
     )
 
     sn2020lao_lc = plot_and_save_lc(
-        SN2020lao.jd_first_epoch, SN2020lao.jd_min, SN2020lao.jd_max, SN2020lao.filename, SN2020lao.snname
+        SN2020lao.jd_first_epoch, SN2020lao.jd_min, SN2020lao.jd_max, SN2020lao.filename, SN2020lao.snname, True
     )
     plt.show(block=True)
