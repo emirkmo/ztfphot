@@ -1,14 +1,27 @@
-from astropy.table import Table
-from lightcurve import LC
 import numpy as np
+from astropy.table import Table
+from io import BytesIO, StringIO
 
 
-def get_ztf_header(filename):
+def open_file(filename: str) -> str:
     """
-    Parse and return header from ZTFPS file
+    Open a file and return a Table object.
     """
     with open(filename, "r") as infile:
         lines = np.asarray(infile.readlines())
+    return lines
+
+
+def get_ztf_header(filename: str | BytesIO) -> str:
+    """
+    Parse and return header from ZTFPS file
+    """
+    if isinstance(filename, str):
+        lines = open_file(filename)
+    elif isinstance(filename, BytesIO):
+        lines = np.asarray(filename.getvalue().decode("utf-8").split['\n'])
+    elif isinstance(filename, StringIO):
+        lines = np.asarray(filename.readlines())
 
     lines_without_comment = lines[[not line.startswith("#") for line in lines]]
     header = lines_without_comment[0]
@@ -23,7 +36,7 @@ def to_numeric(column, nan_reprs=["null"], convert_to_nan=True, output_dtype=flo
     return column.astype(output_dtype)
 
 
-def convert_to_numeric(at: LC) -> LC:
+def convert_to_numeric(at: Table) -> Table:
     # Convert some important string columns to numeric
     force_cols = [
         "forcediffimflux",
@@ -40,7 +53,7 @@ def convert_to_numeric(at: LC) -> LC:
     return at
 
 
-def read_ztf_lc(filepath: str) -> LC:
+def read_ztf_lc(filepath: str) -> Table:
     # Get the data
     header = get_ztf_header(filepath)
     at = Table.read(
