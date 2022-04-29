@@ -1,13 +1,9 @@
-from io import StringIO
-
-import matplotlib.pyplot as plt
-import plotly.tools
 import streamlit as st
 from ztfphot import read_ztf_lc, ZTF_LC, LC, verify_reference, SN, PlotType
-from ztfphot.readers import get_ztf_header
 from astropy.table import Table
+import altair as alt
 import numpy as np
-import matplotlib.pyplot as plt
+import pandas as pd
 
 st.set_page_config(page_title="ZTFphot: ZTF Forced Photometry lightcurve tool", page_icon=":telescope:", layout="wide")
 
@@ -41,7 +37,7 @@ if uploaded_file:
         st.error("Not enough data points!")
 
     options = ["verify references", "photometric", "good seeing",
-               "filter procstatus", "rescale uncertainty", "magnitude", "flux"]
+               "filter procstatus", "rescale uncertainty"]
     steps = st.multiselect(label="Select steps to perform",
                            options=options,
                            default=options[:-1],
@@ -49,14 +45,6 @@ if uploaded_file:
                            Verify references: select only references without contamination
                            Photometric: select only scisigpix <= cutoff (default 6)""",
                            )
-
-    if "verify references" in steps:
-        jd_first = st.number_input(label="First epoch JD", min_value=lc.jd[0], max_value=lc.jd[-1], value=lc.jd[-1])
-        lc = cached_verify(ZTF_LC(at), jd_first)
-
-
-
-
 
     if "photometric" in steps:
         scisigpix_cutoff = st.slider(label="scisigpix_cutoff", min_value=1, max_value=50, value=6, step=1)
@@ -74,24 +62,43 @@ if uploaded_file:
                                     )
         lc = lc.remove_bad_pixels([int(p) for p in procstatus])
 
+    jd_peak_est = lc.estimate_peak_jd()
+    jd_disc_est = jd_peak_est - 25
+
     if "verify references" in steps:
-        jd_first = st.number_input(label="last JD of reference to include.",
-                                   min_value=int(lc.jd[0]), max_value=int(lc.jd[-1]), value=int(lc.jd[0]),
+
+        jd_first = st.slider(label="last JD of reference to include for reference cleaning.",
+                                   min_value=float(np.round(lc.jd[0], 1)), max_value=float(np.round(lc.jd[-1], 1)),
+                                   value=float(np.round(jd_disc_est, 1)), step=0.1,
                                    help='Everything before this JD will be allowed to be used in the reference.')
-        lc = cached_verify(lc, jd_first)
+        #lc = cached_verify(lc, jd_first)
+        lc = verify_reference(lc, jd_first)
 
-
-    #for lc in [allbands.r, allbands.g, allbands.i]:
     st.write("Use the plot and sliders below to select the baseline time range")
-    jd_min = st.slider("Baseline JD min", float(lc.jd[0]-1), float(lc.jd[-1]), value=float(lc.jd[0]), step=.1)
-    jd_max = st.slider("Baseline JD max", float(lc.jd[0]), float(lc.jd[-1]+1), value=float(lc.jd[-1]), step=.1)
+    # jd_min = st.slider("Baseline JD min", float(np.round(lc.jd[0]-1, 1)),  float(np.round(lc.jd[-1], 1)),
+    #                    value=float(np.round(lc.jd[0], 1)), step=.1)
+    # jd_max = st.slider("Baseline JD max",  float(np.round(lc.jd[0], 1)), float(np.round(lc.jd[-1]+1, 1)),
+    #                    value=float(np.round(jd_disc_est, 1)), step=.1)
 
-    fig, ax = plt.subplots(figsize=(6, 4))
-    fig, ax = lc.plot_diff_flux(fig=fig, ax=ax, xmin=jd_min, xmax=jd_max)
-    ax.axvline(jd_min)
-    ax.axvline(jd_max)
-    ax.set_xlim(jd_min-20, jd_max+20)
-    st.pyplot(fig)
+    jd_min, jd_max = st.slider(
+        "Baseline JD min and max",
+        float(np.round(lc.jd[0]-1, 1)),  float(np.round(lc.jd[-1]+1, 1)),
+        (float(np.round(lc.jd[0], 1)), float(np.round(jd_disc_est, 1))),
+        step=0.1
+    )
+
+    df = lc.to_pandas()
+   # df['procstring'] = df.procstatus.astype(str)
+    chart = alt.Chart(df).mark_point(size=60).encode(
+        alt.X('jd', scale=alt.Scale(zero=False)),
+        alt.Y('forcediffimflux', scale=alt.Scale(zero=False)),
+        tooltip=['jd', 'forcediffimflux', 'forcediffimfluxunc', 'scisigpix',
+                 'sciinpseeing', 'forcediffimchisq', 'procstatus']
+    ).interactive()
+
+    line = alt.Chart(lc.to_pandas()).mark_rule(color='cyan').encode(x=alt.datum(jd_min))
+    line2 = alt.Chart(lc.to_pandas()).mark_rule(color='cyan').encode(x=alt.datum(jd_max))
+    st.altair_chart(chart+line+line2, use_container_width=True)
 
     st.write("---")
     if "rescale uncertainty" in steps:
@@ -99,24 +106,40 @@ if uploaded_file:
         lc.rescale_uncertainty()
         lc.RMS = lc.RMS_baseline(jd_min, jd_max)
         if lc.RMS >= 1.01:
-            lc["forcediffimfluxunc"] = lc["forcediffimfluxunc"] * lc.RMS
+            lc["fluxerr_corr"] = lc["forcediffimfluxunc"] * lc.RMS
 
-    if "magnitude" in steps:
-        snr = st.slider(label="SNR Limit threshold", min_value=1, max_value=10, value=3, step=1)
-        lc["limit"] = lc["flux_corr"] / lc["forcediffimfluxunc"] < snr
-        lc.get_mag_lc()
+    snr = st.slider(label="SNR limit threshold", min_value=1, max_value=10, value=3, step=1)
+    snt = st.slider(label="Limit sigma (default 5)", min_value=1, max_value=15, value=5, step=1)
+    lc.get_mag_lc(snr=snr, snt=snt)
 
-        detections = lc[~lc.islimit]  # type: ignore
-        limits = lc[lc.islimit]  # type: ignore
+    band_df = lc.to_pandas()
+    detections = band_df[~band_df.islimit]
+    limits = band_df[band_df.islimit]
+    band_df['plot_mag'] = pd.concat((band_df.mag[~band_df.islimit], band_df.lim[band_df.islimit]), axis=0)
+    band_df['plot_err'] = band_df.mag_err[(~band_df.islimit) & (band_df.mag_err <= 1.5)]
 
-        fig2, ax2 = detections.plot("jd", "mag", yerr="mag_err", kind=PlotType.errorbar)
-        limits.plot("jd", "lim", kind=PlotType.scatter, ax=ax2, plot_kwargs={'marker': 'v'})
+    base = alt.Chart(band_df).mark_point(size=60, filled=True).encode(
+        alt.X('jd', scale=alt.Scale(zero=False)),
+        alt.Y('plot_mag', scale=alt.Scale(reverse=True, zero=False)),
+        alt.YError('plot_err', band=1),
+        color=alt.Color('islimit'),
+        shape=alt.Shape('islimit', scale=alt.Scale(range=['circle', 'triangle'])),
+        tooltip=['jd', 'mag', 'mag_err', 'islimit']
+    )
 
-    st.pyplot(fig2)
+    err = alt.Chart(band_df).mark_errorbar(clip=True, color='lightblue').encode(
+        alt.X('jd', scale=alt.Scale(zero=False)),
+        alt.Y('plot_mag', scale=alt.Scale(reverse=True, zero=False)),
+        alt.YError('plot_err', band=1),
+        tooltip=['jd', 'mag', 'mag_err', 'islimit']
+    )
 
-    if "flux" in steps:
-        st.error("Not implemented yet")
+    chart2 = base + err
 
+    st.altair_chart(chart2.interactive(bind_y=False), use_container_width=True)
+
+    st.dataframe(detections)
+    st.dataframe(limits)
 
     #verify_references = st.button("verify_references")
     #if verify_references:

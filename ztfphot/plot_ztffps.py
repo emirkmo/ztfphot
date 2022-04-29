@@ -46,7 +46,7 @@ def plot_and_save_lc(sn: SN, lc: LC):
         plt.gca().invert_yaxis()
         fig.savefig(f"{OUTPUTDIR}{sn.snname}_{band['filter'][0]}.png")
         band.write(f"{OUTPUTDIR}{sn.snname}_ztffps_{band['filter'][0][-1]}band.ecsv", format="ascii.ecsv", overwrite=True)
-    return lc
+    return bands
 
 
 def main():
@@ -71,7 +71,7 @@ def main():
     lc = make_ztf_lc(SN2020lao, verify_references=True)
     sn2020lao_lc = plot_and_save_lc(SN2020lao, lc)
     plt.show(block=True)
-    return lc
+    return sn2020lao_lc
 
 
 if __name__ == "__main__":

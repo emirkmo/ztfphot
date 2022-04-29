@@ -1,6 +1,8 @@
 from typing import Optional
 
 from astropy.table import Table
+from astropy.time import Time
+from astropy.timeseries import TimeSeries
 import numpy as np
 from ztfphot.plotting import add_plot
 from abc import ABC, abstractmethod
@@ -66,6 +68,13 @@ class ZTF_LC(LC):
     def i(self) -> LC:
         return self[self["filter"] == "ZTF_i"]
 
+    def estimate_peak_jd(self, bin_size: int = 5) -> float:
+        """Estimate peak flux from lightcurve"""
+        fluxcol = "flux_corr" if "flux_corr" in self.colnames else "forcediffimflux"
+        interpjd = np.convolve(self["jd"], np.ones(bin_size) / bin_size, 'valid')
+        interpf = np.convolve(self[fluxcol], np.ones(bin_size) / bin_size, 'valid')
+        return interpjd[np.nanargmax(interpf)]
+
     def photometric(self, scisigpix_cutoff: float = 6) -> LC:
         return self[self["scisigpix"] <= scisigpix_cutoff]
 
@@ -89,7 +98,7 @@ class ZTF_LC(LC):
         """Rescale uncertainty using chisq"""
         self["forcediffimfluxunc"] = self["forcediffimfluxunc"] * np.sqrt(self["forcediffimchisq"])
 
-    def get_mag_lc(self):
+    def get_mag_lc(self, snr: int = 3, snt: int = 5):
         """Convert flux to AB magnitude"""
         fluxcol = "flux_corr" if "flux_corr" in self.colnames else "forcediffimflux"
         errcol = "fluxerr_corr" if "fluxerr_corr" in self.colnames else "forcediffimfluxunc"
@@ -97,8 +106,8 @@ class ZTF_LC(LC):
         self["mag"] = self["zpdiff"] - 2.5 * np.log10(self[fluxcol])
         self["mag_err"] = 1.0857 * self[errcol] / self[fluxcol]
 
-        self["islimit"] = self[fluxcol] / self[errcol] < 3
-        self["lim"] = self["zpdiff"] - 2.5 * np.log10(5 * self[errcol])
+        self["islimit"] = (self[fluxcol] / self[errcol]) < snr
+        self["lim"] = self["zpdiff"] - 2.5 * np.log10(snt * self[errcol])
 
     def simple_median_baseline(self, jd_min, jd_max):
         """Use simple median between to JDs for baseline flux"""
