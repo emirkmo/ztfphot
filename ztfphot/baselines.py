@@ -1,4 +1,3 @@
-from lightcurve import LC
 import numpy as np
 from typing import Any
 from astropy.table import Table

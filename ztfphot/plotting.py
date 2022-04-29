@@ -51,7 +51,7 @@ def add_plot(cls):
 
         return fig, ax
 
-    def plot_diff_flux(self, ax=None, marker="o", linestyle="None", xmin=None, xmax=None):
+    def plot_diff_flux(self, fig=None, ax=None, marker="o", linestyle="None", xmin=None, xmax=None):
         if ax is None:
             fig, ax = plt.subplots(figsize=(12, 9))
 
@@ -65,7 +65,7 @@ def add_plot(cls):
         curr_xmax = xmax if xmax is not None else curr_xmax
         ax.set_xlim(curr_xmin, curr_xmax)
 
-        return ax
+        return fig, ax
 
     setattr(cls, "plot", plot)
     setattr(cls, "plot_diff_flux", plot_diff_flux)

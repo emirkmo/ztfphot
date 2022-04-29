@@ -1,30 +1,55 @@
+from typing import Optional
+
 from astropy.table import Table
+from astropy.time import Time
+from astropy.timeseries import TimeSeries
 import numpy as np
-from typing import Any, Optional
-from plotting import add_plot
-from abc import ABC, abstractproperty, abstractmethod
+from ztfphot.plotting import add_plot
+from abc import ABC, abstractmethod
 
 
 class LC(ABC, Table):
-    @abstractproperty
+
+    @property
     def r(self):
         return self
 
-    @abstractproperty
+    @property
     def g(self):
         return self
 
-    @abstractproperty
+    @property
     def i(self):
         return self
+
+    @abstractmethod
+    def photometric(self):
+        pass
+
+    @abstractmethod
+    def remove_bad_seeing(self):
+        pass
+
+    @abstractmethod
+    def remove_bad_pixels(self):
+        pass
 
     @abstractmethod
     def clean_lc(self):
         pass
 
+    @abstractmethod
+    def get_mag_lc(self):
+        pass
+
+    @abstractmethod
+    def rescale_uncertainty(self):
+        pass
+
 
 @add_plot
 class ZTF_LC(LC):
+
     def __getattr__(self, key):
         if key in self.colnames:
             return self[key]
@@ -43,27 +68,37 @@ class ZTF_LC(LC):
     def i(self) -> LC:
         return self[self["filter"] == "ZTF_i"]
 
-    def photometric(self, scisigpix_cutoff=6):
-        return self[self["scisigpix"] >= scisigpix_cutoff]
+    def estimate_peak_jd(self, bin_size: int = 5) -> float:
+        """Estimate peak flux from lightcurve"""
+        fluxcol = "flux_corr" if "flux_corr" in self.colnames else "forcediffimflux"
+        interpjd = np.convolve(self["jd"], np.ones(bin_size) / bin_size, 'valid')
+        interpf = np.convolve(self[fluxcol], np.ones(bin_size) / bin_size, 'valid')
+        return interpjd[np.nanargmax(interpf)]
 
-    def remove_bad_seeing(self, seeing_limit=7):
+    def photometric(self, scisigpix_cutoff: float = 6) -> LC:
+        return self[self["scisigpix"] <= scisigpix_cutoff]
+
+    def remove_bad_seeing(self, seeing_limit: float = 7) -> LC:
         return self[self["sciinpseeing"] <= seeing_limit]
 
-    def remove_badpixels(self):
-        return self[self["procstatus"] != 56]
+    def remove_bad_pixels(self, proc_statuses: list[int] = [56, 63, 64]) -> LC:
+        """Remove bad pixels from the lightcurve"""
+        return self[~np.isin(self["procstatus"], proc_statuses)]
 
-    def clean_lc(self, good_seeing: bool = True, good_pixels: bool = True, photometric: bool = False) -> LC:
+    def clean_lc(self, seeing_limit: Optional[float] = None,
+                 proc_statuses: Optional[list[int]] = None,
+                 scisigpix_cutoff: Optional[float | int] = None) -> LC:
         """Clean the lightcurve"""
-        self = self.remove_badpixels() if good_pixels else self
-        self = self.remove_bad_seeing() if good_seeing else self
-        self = self.photometric() if photometric else self
+        self = self.remove_bad_pixels(proc_statuses) if proc_statuses else self.remove_bad_pixels()
+        self = self.remove_bad_seeing(seeing_limit) if seeing_limit else self.remove_bad_seeing()
+        self = self.photometric(scisigpix_cutoff) if scisigpix_cutoff else self.photometric()
         return self
 
     def rescale_uncertainty(self):
         """Rescale uncertainty using chisq"""
         self["forcediffimfluxunc"] = self["forcediffimfluxunc"] * np.sqrt(self["forcediffimchisq"])
 
-    def get_mag_lc(self):
+    def get_mag_lc(self, snr: int = 3, snt: int = 5):
         """Convert flux to AB magnitude"""
         fluxcol = "flux_corr" if "flux_corr" in self.colnames else "forcediffimflux"
         errcol = "fluxerr_corr" if "fluxerr_corr" in self.colnames else "forcediffimfluxunc"
@@ -71,8 +106,8 @@ class ZTF_LC(LC):
         self["mag"] = self["zpdiff"] - 2.5 * np.log10(self[fluxcol])
         self["mag_err"] = 1.0857 * self[errcol] / self[fluxcol]
 
-        self["islimit"] = self[fluxcol] / self[errcol] < 3
-        self["lim"] = self["zpdiff"] - 2.5 * np.log10(5 * self[errcol])
+        self["islimit"] = (self[fluxcol] / self[errcol]) < snr
+        self["lim"] = self["zpdiff"] - 2.5 * np.log10(snt * self[errcol])
 
     def simple_median_baseline(self, jd_min, jd_max):
         """Use simple median between to JDs for baseline flux"""
@@ -112,3 +147,9 @@ def verify_reference(at: LC, jd_first: float) -> LC:
 
 def calculate_mag_lc():
     raise NotImplementedError()
+
+
+
+
+
+

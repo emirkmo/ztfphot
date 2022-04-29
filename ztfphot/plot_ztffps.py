@@ -1,44 +1,36 @@
 from typing import Optional
-from dataclasses import dataclass
 import matplotlib.pyplot as plt
 import pandas as pd
-from plotting import PlotType
-from lightcurve import ZTF_LC, verify_reference
-from readers import read_ztf_lc
+from ztfphot.plotting import PlotType
+from ztfphot.lightcurve import ZTF_LC, LC, verify_reference
+from ztfphot.readers import read_ztf_lc
+from ztfphot.sn import SN
+
 
 INPUTDIR = "tests/input/"
 OUTPUTDIR = "tests/output/"
 
 
-@dataclass
-class SN:
-    jd_first_epoch: float
-    jd_min: float
-    jd_max: float
-    snname: str
-    filename: str
-
-
-def make_ztf_lc(fpath: str, jd_first: Optional[float] = None, verify_references: bool = False) -> ZTF_LC:
+def make_ztf_lc(sn: SN, verify_references: bool = False) -> ZTF_LC:
+    fpath = sn.filename
+    jd_first = sn.jd_first_epoch
     at = read_ztf_lc(fpath)
     if jd_first is not None and verify_references:
         at = verify_reference(at, jd_first)  # Remove references contaminated by the object
 
     lc = ZTF_LC(at)
-    lc.clean_lc(good_pixels=True, good_seeing=True)
+    lc.clean_lc(scisigpix_cutoff=25)
     return lc
 
 
-def plot_and_save_lc(jd_first_epoch: float, jd_min: float, jd_max: float, filename: str, snname: str,
-    verify_references:bool = False):
+def plot_and_save_lc(sn: SN, lc: LC):
 
-    lc = make_ztf_lc(filename, jd_first_epoch, verify_references=verify_references)
     bands = [lc.g, lc.r, lc.i]
 
     for band in bands:
-        band["flux_corr"] = band["forcediffimflux"] - band.simple_median_baseline(jd_min, jd_max)  # type: ignore
+        band["flux_corr"] = band["forcediffimflux"] - band.simple_median_baseline(sn.jd_min, sn.jd_max)  # type: ignore
         band.rescale_uncertainty()  # type: ignore
-        band.RMS = band.RMS_baseline(jd_min, jd_max)  # type: ignore
+        band.RMS = band.RMS_baseline(sn.jd_min, sn.jd_max)  # type: ignore
         if band.RMS >= 1.01:  # type: ignore
             band["forcediffimfluxunc"] = band["forcediffimfluxunc"] * band.RMS  # type: ignore
 
@@ -52,13 +44,13 @@ def plot_and_save_lc(jd_first_epoch: float, jd_min: float, jd_max: float, filena
         limits.plot("jd", "lim", kind=PlotType.scatter, ax=ax, plot_kwargs={'marker':'v'})
         plt.xlim(2458976, 2459120)
         plt.gca().invert_yaxis()
-        fig.savefig(f"{OUTPUTDIR}{snname}_{band['filter'][0]}.png")
-        band.write(f"{OUTPUTDIR}{snname}_ztffps_{band['filter'][0][-1]}band.ecsv", format="ascii.ecsv", overwrite=True)
-    return lc
+        fig.savefig(f"{OUTPUTDIR}{sn.snname}_{band['filter'][0]}.png")
+        band.write(f"{OUTPUTDIR}{sn.snname}_ztffps_{band['filter'][0][-1]}band.ecsv", format="ascii.ecsv", overwrite=True)
+    return bands
 
 
-if __name__ == "__main__":
-    # matplotlib.use('Qt5Agg')
+def main():
+
     plt.ion()
     phases = pd.read_json(INPUTDIR + "phase_epochs.json", typ="Series")
     SN2020lao = SN(
@@ -76,8 +68,11 @@ if __name__ == "__main__":
         snname="SN2018ebt",
         filename=INPUTDIR + "forcedphotometry_req00108452_lc.txt",
     )
-
-    sn2020lao_lc = plot_and_save_lc(
-        SN2020lao.jd_first_epoch, SN2020lao.jd_min, SN2020lao.jd_max, SN2020lao.filename, SN2020lao.snname, True
-    )
+    lc = make_ztf_lc(SN2020lao, verify_references=True)
+    sn2020lao_lc = plot_and_save_lc(SN2020lao, lc)
     plt.show(block=True)
+    return sn2020lao_lc
+
+
+if __name__ == "__main__":
+    lc = main()
