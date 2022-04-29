@@ -23,8 +23,12 @@ def cached_read(uploaded_file) -> Table:
 def cached_verify(_lc: LC, jd_first) -> LC:
     return verify_reference(_lc, jd_first)
 
+@st.experimental_memo
+def cache_download(data: pd.DataFrame):
+    return data.to_csv(index=False).encode('utf-8')
 
-snname = st.text_input("SN name: <SN2020xyz>")
+
+snname = st.text_input("SN name: <SN2020xyz>. (Currently only used for output filename).")
 uploaded_file = st.file_uploader('Choose a ZTFFPS file', type=['txt', 'csv'])
 if uploaded_file:
     at = cached_read(uploaded_file)
@@ -52,7 +56,7 @@ if uploaded_file:
 
     if "good seeing" in steps:
         seeing_cutoff = st.slider(label="seeing_cutoff", min_value=0.9, max_value=10., value=7., step=0.1)
-        lc = lc.remove_bad_seeing()
+        lc = lc.remove_bad_seeing(seeing_cutoff)
 
     if "filter procstatus" in steps:
         procstatus = st.multiselect(label="procstatus",
@@ -113,14 +117,16 @@ if uploaded_file:
     lc.get_mag_lc(snr=snr, snt=snt)
 
     band_df = lc.to_pandas()
-    detections = band_df[~band_df.islimit]
-    limits = band_df[band_df.islimit]
+
     band_df['plot_mag'] = pd.concat((band_df.mag[~band_df.islimit], band_df.lim[band_df.islimit]), axis=0)
     band_df['plot_err'] = band_df.mag_err[(~band_df.islimit) & (band_df.mag_err <= 1.5)]
 
+    # annoying explicit domain setting because altair sometimes breaks and resets to zero anyway.
+    ymin = band_df.plot_mag.min() -0.7
+
     base = alt.Chart(band_df).mark_point(size=60, filled=True).encode(
         alt.X('jd', scale=alt.Scale(zero=False)),
-        alt.Y('plot_mag', scale=alt.Scale(reverse=True, zero=False)),
+        alt.Y('plot_mag', scale=alt.Scale(reverse=True, zero=False, domainMin=ymin)),
         alt.YError('plot_err', band=1),
         color=alt.Color('islimit'),
         shape=alt.Shape('islimit', scale=alt.Scale(range=['circle', 'triangle'])),
@@ -129,7 +135,7 @@ if uploaded_file:
 
     err = alt.Chart(band_df).mark_errorbar(clip=True, color='lightblue').encode(
         alt.X('jd', scale=alt.Scale(zero=False)),
-        alt.Y('plot_mag', scale=alt.Scale(reverse=True, zero=False)),
+        alt.Y('plot_mag', scale=alt.Scale(reverse=True, zero=False, domainMin=ymin)),
         alt.YError('plot_err', band=1),
         tooltip=['jd', 'mag', 'mag_err', 'islimit']
     )
@@ -138,20 +144,21 @@ if uploaded_file:
 
     st.altair_chart(chart2.interactive(bind_y=False), use_container_width=True)
 
-    st.dataframe(detections)
-    st.dataframe(limits)
+    detections = band_df[~band_df.islimit]
+    limits = band_df[band_df.islimit]
+    csv_det = cache_download(detections)
+    csv_lim = cache_download(limits)
 
-    #verify_references = st.button("verify_references")
-    #if verify_references:
-
-    #    lc = cached_verify(lc, None)
-
-
-    #bytes_data = uploaded_file.getvalue()
-    #stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
-    #lines = np.asarray(stringio.readlines())
-    #lines_without_comment = lines[[not line.startswith("#") for line in lines]]
-    #st.write(lines_without_comment)
-    #header = lines_without_comment[0]
-    #header = header.replace(",", "").strip()
-    #header = get_ztf_header(uploaded_file)
+    st.download_button(
+        label="Download data as CSV",
+        data=csv_det,
+        file_name=f'{snname}_detections.csv',
+        mime='text/csv',
+    )
+    st.download_button(
+        label="Download data as CSV",
+        data=csv_lim,
+        file_name=f'{snname}_limits.csv',
+        mime='text/csv',
+    )
+    #st.dataframe(band_df[['mag','mag_err', 'plot_mag', 'plot_err']].dropna())
