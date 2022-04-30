@@ -2,3 +2,6 @@ numpy
 matplotlib
 astropy
 pandas
+altair
+streamlit
+scipy
