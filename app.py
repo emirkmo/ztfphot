@@ -23,6 +23,7 @@ def cached_read(uploaded_file) -> Table:
 def cached_verify(_lc: LC, jd_first) -> LC:
     return verify_reference(_lc, jd_first)
 
+
 @st.experimental_memo
 def cache_download(data: pd.DataFrame):
     return data.to_csv(index=False).encode('utf-8')
@@ -44,7 +45,7 @@ if uploaded_file:
                "filter procstatus", "rescale uncertainty"]
     steps = st.multiselect(label="Select steps to perform",
                            options=options,
-                           default=options[:-1],
+                           default=options,
                            help="""
                            Verify references: select only references without contamination
                            Photometric: select only scisigpix <= cutoff (default 6)""",
@@ -75,15 +76,9 @@ if uploaded_file:
                                    min_value=float(np.round(lc.jd[0], 1)), max_value=float(np.round(lc.jd[-1], 1)),
                                    value=float(np.round(jd_disc_est, 1)), step=0.1,
                                    help='Everything before this JD will be allowed to be used in the reference.')
-        #lc = cached_verify(lc, jd_first)
-        lc = verify_reference(lc, jd_first)
+        lc = cached_verify(lc, jd_first)
 
     st.write("Use the plot and sliders below to select the baseline time range")
-    # jd_min = st.slider("Baseline JD min", float(np.round(lc.jd[0]-1, 1)),  float(np.round(lc.jd[-1], 1)),
-    #                    value=float(np.round(lc.jd[0], 1)), step=.1)
-    # jd_max = st.slider("Baseline JD max",  float(np.round(lc.jd[0], 1)), float(np.round(lc.jd[-1]+1, 1)),
-    #                    value=float(np.round(jd_disc_est, 1)), step=.1)
-
     jd_min, jd_max = st.slider(
         "Baseline JD min and max",
         float(np.round(lc.jd[0]-1, 1)),  float(np.round(lc.jd[-1]+1, 1)),
@@ -104,26 +99,26 @@ if uploaded_file:
     line2 = alt.Chart(lc.to_pandas()).mark_rule(color='cyan').encode(x=alt.datum(jd_max))
     st.altair_chart(chart+line+line2, use_container_width=True)
 
+    # correct the flux:
+    lc["flux_corr"] = lc["forcediffimflux"] - lc.simple_median_baseline(jd_min, jd_max)
+
     st.write("---")
     if "rescale uncertainty" in steps:
-        lc["flux_corr"] = lc["forcediffimflux"] - lc.simple_median_baseline(jd_min, jd_max)
         lc.rescale_uncertainty()
-        lc.RMS = lc.RMS_baseline(jd_min, jd_max)
-        if lc.RMS >= 1.01:
-            lc["fluxerr_corr"] = lc["forcediffimfluxunc"] * lc.RMS
+        RMS = lc.RMS_baseline(jd_min, jd_max)
+        if RMS >= 1.01:
+            lc["fluxerr_corr"] = lc["forcediffimfluxunc"] * RMS
 
     snr = st.slider(label="SNR limit threshold", min_value=1, max_value=10, value=3, step=1)
     snt = st.slider(label="Limit sigma (default 5)", min_value=1, max_value=15, value=5, step=1)
     lc.get_mag_lc(snr=snr, snt=snt)
 
     band_df = lc.to_pandas()
-
     band_df['plot_mag'] = pd.concat((band_df.mag[~band_df.islimit], band_df.lim[band_df.islimit]), axis=0)
     band_df['plot_err'] = band_df.mag_err[(~band_df.islimit) & (band_df.mag_err <= 1.5)]
 
     # annoying explicit domain setting because altair sometimes breaks and resets to zero anyway.
-    ymin = band_df.plot_mag.min() -0.7
-
+    ymin = max(band_df.plot_mag.dropna().min() - 0.7, 0)
     base = alt.Chart(band_df).mark_point(size=60, filled=True).encode(
         alt.X('jd', scale=alt.Scale(zero=False)),
         alt.Y('plot_mag', scale=alt.Scale(reverse=True, zero=False, domainMin=ymin)),
