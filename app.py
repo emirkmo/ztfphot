@@ -27,12 +27,13 @@ def cached_verify(_lc: LC, jd_first) -> LC:
 def cache_download(data: pd.DataFrame):
     return data.to_csv(index=False).encode('utf-8')
 
+snname = st.text_input("SN name: <SN2020xyz> / <ztf20TooLngNm> (Currently only used for output filename).")
 
-snname = st.text_input("SN name: <SN2020xyz>. (Currently only used for output filename).")
-uploaded_file = st.file_uploader('Choose a ZTFFPS file', type=['txt', 'csv'])
+uploaded_file = st.file_uploader('Upload a ZTF forced photometry service file', type=['txt', 'csv'], key='ztffps_file')
 if uploaded_file:
     at = cached_read(uploaded_file)
     allbands = ZTF_LC(at)
+
 
     band = st.radio("ZTF Filter:", ("g", "r", "i"))
     lc = allbands[allbands["filter"] == f"ZTF_{band}"]
@@ -40,43 +41,54 @@ if uploaded_file:
     if len(lc) <= 10:
         st.error("Not enough data points!")
 
-    options = ["verify references", "photometric", "good seeing",
-               "filter procstatus", "rescale uncertainty"]
-    steps = st.multiselect(label="Select steps to perform",
-                           options=options,
-                           default=options[:-1],
-                           help="""
-                           Verify references: select only references without contamination
-                           Photometric: select only scisigpix <= cutoff (default 6)""",
-                           )
+    col1, col2 = st.columns(2)
 
-    if "photometric" in steps:
-        scisigpix_cutoff = st.slider(label="scisigpix_cutoff", min_value=1, max_value=50, value=6, step=1)
-        lc = lc.photometric(scisigpix_cutoff)
+    with col1:
+        options = ["verify references", "photometric", "good seeing",
+                   "filter procstatus", "rescale uncertainty"]
+        steps = st.multiselect(label="Select steps to perform",
+                               options=options,
+                               default=options,
+                               help="""
+                               Verify references: select only references without contamination \n
+                               Photometric: select only scisigpix <= cutoff (default 6) \n
+                               Good seeing: select only seeing <= cutoff (default 7) \n
+                               Filter procstatus: Exclude listed proc status flags (corresponding to errors) \n
+                               Rescale uncertainty: rescale uncertainty using chisq (Yao et al. 2019)
+                               """,
+                               )
 
-    if "good seeing" in steps:
-        seeing_cutoff = st.slider(label="seeing_cutoff", min_value=0.9, max_value=10., value=7., step=0.1)
-        lc = lc.remove_bad_seeing(seeing_cutoff)
+    with col2:
+        with st.expander("Parameters for selected cleaning steps:"):
 
-    if "filter procstatus" in steps:
-        procstatus = st.multiselect(label="procstatus",
-                                    options=[56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 255],
-                                    default=[56, 63, 64],
-                                    help="Select the filter procstatus to exclude"
-                                    )
-        lc = lc.remove_bad_pixels([int(p) for p in procstatus])
+            if "filter procstatus" in steps:
+                procstatus = st.multiselect(label="Procstatus: procstatus to exclude",
+                                            options=[56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 255],
+                                            default=[56, 63, 64],
+                                            help="Select the filter procstatus to exclude"
+                                            )
+                lc = lc.remove_bad_pixels([int(p) for p in procstatus])
+
+            if "photometric" in steps:
+                scisigpix_cutoff = st.slider(label="Photometric: scisigpix_cutoff in pixels", min_value=1, max_value=50, value=6, step=1)
+                lc = lc.photometric(scisigpix_cutoff)
+
+            if "good seeing" in steps:
+                seeing_cutoff = st.slider(label="Good seeing: seeing_cutoff in arcsec", min_value=0.9, max_value=10., value=7., step=0.1)
+                lc = lc.remove_bad_seeing(seeing_cutoff)
 
     jd_peak_est = lc.estimate_peak_jd()
     jd_disc_est = jd_peak_est - 25
 
     if "verify references" in steps:
 
-        jd_first = st.slider(label="last JD of reference to include for reference cleaning.",
+        jd_first = st.slider(label="Last JD of reference to include for reference cleaning. Set to a safe epoch "
+                                   "before transient:",
                                    min_value=float(np.round(lc.jd[0], 1)), max_value=float(np.round(lc.jd[-1], 1)),
                                    value=float(np.round(jd_disc_est, 1)), step=0.1,
                                    help='Everything before this JD will be allowed to be used in the reference.')
-        #lc = cached_verify(lc, jd_first)
-        lc = verify_reference(lc, jd_first)
+        lc = cached_verify(lc, jd_first)
+        #lc = verify_reference(lc, jd_first)
 
     st.write("Use the plot and sliders below to select the baseline time range")
     # jd_min = st.slider("Baseline JD min", float(np.round(lc.jd[0]-1, 1)),  float(np.round(lc.jd[-1], 1)),
@@ -112,9 +124,13 @@ if uploaded_file:
         if lc.RMS >= 1.01:
             lc["fluxerr_corr"] = lc["forcediffimfluxunc"] * lc.RMS
 
-    snr = st.slider(label="SNR limit threshold", min_value=1, max_value=10, value=3, step=1)
-    snt = st.slider(label="Limit sigma (default 5)", min_value=1, max_value=15, value=5, step=1)
+    col1, col2 = st.columns(2)
+    with col1:
+        snr = st.slider(label="SNR limit threshold", min_value=1, max_value=10, value=3, step=1)
+    with col2:
+        snt = st.slider(label="Limit sigma (default 5)", min_value=1, max_value=15, value=5, step=1)
     lc.get_mag_lc(snr=snr, snt=snt)
+
 
     band_df = lc.to_pandas()
 
@@ -149,16 +165,19 @@ if uploaded_file:
     csv_det = cache_download(detections)
     csv_lim = cache_download(limits)
 
-    st.download_button(
-        label="Download data as CSV",
-        data=csv_det,
-        file_name=f'{snname}_detections.csv',
-        mime='text/csv',
-    )
-    st.download_button(
-        label="Download data as CSV",
-        data=csv_lim,
-        file_name=f'{snname}_limits.csv',
-        mime='text/csv',
-    )
-    #st.dataframe(band_df[['mag','mag_err', 'plot_mag', 'plot_err']].dropna())
+    col1, col2 = st.columns(2)
+    with col1:
+        st.download_button(
+            label="Download detections as CSV",
+            data=csv_det,
+            file_name=f'{snname}_{band}detections.csv',
+            mime='text/csv',
+        )
+    with col2:
+        st.download_button(
+            label="Download limits as CSV",
+            data=csv_lim,
+            file_name=f'{snname}_{band}limits.csv',
+            mime='text/csv',
+        )
+
