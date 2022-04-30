@@ -28,13 +28,12 @@ def cached_verify(_lc: LC, jd_first) -> LC:
 def cache_download(data: pd.DataFrame):
     return data.to_csv(index=False).encode('utf-8')
 
-snname = st.text_input("SN name: <SN2020xyz> / <ztf20TooLngNm> (Currently only used for output filename).")
 
+snname = st.text_input("SN name: <SN2020xyz> / <ztf20TooLngNm> (Currently only used for output filename).")
 uploaded_file = st.file_uploader('Upload a ZTF forced photometry service file', type=['txt', 'csv'], key='ztffps_file')
 if uploaded_file:
     at = cached_read(uploaded_file)
     allbands = ZTF_LC(at)
-
 
     band = st.radio("ZTF Filter:", ("g", "r", "i"))
     lc = allbands[allbands["filter"] == f"ZTF_{band}"]
@@ -42,6 +41,7 @@ if uploaded_file:
     if len(lc) <= 10:
         st.error("Not enough data points!")
 
+    st.markdown("### Adjust parameters and cleaning steps, results will update live ([see docs](https://irsa.ipac.caltech.edu/data/ZTF/docs/forcedphot.pdf)):")
     col1, col2 = st.columns(2)
 
     with col1:
@@ -60,7 +60,7 @@ if uploaded_file:
                                )
 
     with col2:
-        with st.expander("Parameters for selected cleaning steps:"):
+        with st.expander("Parameters for selected cleaning steps:", expanded=True):
 
             if "filter procstatus" in steps:
                 procstatus = st.multiselect(label="Procstatus: procstatus to exclude",
@@ -71,7 +71,8 @@ if uploaded_file:
                 lc = lc.remove_bad_pixels([int(p) for p in procstatus])
 
             if "photometric" in steps:
-                scisigpix_cutoff = st.slider(label="Photometric: scisigpix_cutoff in pixels", min_value=1, max_value=50, value=6, step=1)
+                defaults = {"g": 6, "r": 6, "i": 9}
+                scisigpix_cutoff = st.slider(label="Photometric: scisigpix_cutoff in pixels", min_value=1, max_value=50, value=defaults[band], step=1)
                 lc = lc.photometric(scisigpix_cutoff)
 
             if "good seeing" in steps:
@@ -80,26 +81,42 @@ if uploaded_file:
 
     jd_peak_est = lc.estimate_peak_jd()
     jd_disc_est = jd_peak_est - 25
+    jd_verify = jd_disc_est
+    jd_max = jd_verify
+    jd_min = lc.jd[0]
 
+    _values = st.session_state.get(f"baseline_jd_min_max_{band}")
+    if _values:
+        jd_min, jd_max = _values
+
+    st.markdown(
+        "### Set baseline and approximate discovery epoch using difference image flux lightcurve and sliders below:")
     if "verify references" in steps:
+        st.markdown("""<span style="color:yellow">Verify reference JD:</span>""", unsafe_allow_html=True)
+        use_baseline = st.button("Set last reference JD to Baseline JD Max", help="click to set last reference JD to Baseline JD Max")
+        if st.session_state.get(f"jd_first_{band}"):
+            jd_verify = st.session_state.get(f"jd_first_{band}")
+        if use_baseline:
+            jd_verify = jd_max
 
-        jd_first = st.slider(label="Last JD of reference to include for reference cleaning. Set to a safe epoch "
-                                   "before transient:",
+        jd_first = st.slider(label="Last JD of reference to include for reference cleaning. Set to "
+                                   "a safe epoch before transient:",
                                    min_value=float(np.round(lc.jd[0], 1)), max_value=float(np.round(lc.jd[-1], 1)),
-                                   value=float(np.round(jd_disc_est, 1)), step=0.1,
+                                   value=float(np.round(jd_verify, 1)), step=0.1, key=f"jd_first_{band}",
                                    help='Everything before this JD will be allowed to be used in the reference.')
-        lc = cached_verify(lc, jd_first)
+        lc = verify_reference(lc, jd_first)
 
-    st.write("Use the plot and sliders below to select the baseline time range")
+    st.markdown("""
+    <span style="color:cyan">Baseline JD min and max:</span>
+    """, unsafe_allow_html=True)
     jd_min, jd_max = st.slider(
-        "Baseline JD min and max",
+        "Use the plot and sliders below to select the baseline time range:",
         float(np.round(lc.jd[0]-1, 1)),  float(np.round(lc.jd[-1]+1, 1)),
-        (float(np.round(lc.jd[0], 1)), float(np.round(jd_disc_est, 1))),
-        step=0.1
-    )
+        (float(np.round(jd_min, 1)), float(np.round(jd_max, 1))),
+        step=0.1, key=f"baseline_jd_min_max_{band}",
+        help="Baseline should be selected so that the interval does not contain any SN flux but >30 points!")
 
     df = lc.to_pandas()
-   # df['procstring'] = df.procstatus.astype(str)
     chart = alt.Chart(df).mark_point(size=60).encode(
         alt.X('jd', scale=alt.Scale(zero=False)),
         alt.Y('forcediffimflux', scale=alt.Scale(zero=False)),
@@ -107,9 +124,10 @@ if uploaded_file:
                  'sciinpseeing', 'forcediffimchisq', 'procstatus']
     ).interactive()
 
-    line = alt.Chart(lc.to_pandas()).mark_rule(color='cyan').encode(x=alt.datum(jd_min))
-    line2 = alt.Chart(lc.to_pandas()).mark_rule(color='cyan').encode(x=alt.datum(jd_max))
-    st.altair_chart(chart+line+line2, use_container_width=True)
+    line_min = alt.Chart(lc.to_pandas()).mark_rule(color='cyan').encode(x=alt.datum(jd_min))
+    line_max = alt.Chart(lc.to_pandas()).mark_rule(color='cyan').encode(x=alt.datum(jd_max))
+    line_verify = alt.Chart(lc.to_pandas()).mark_rule(color='yellow').encode(x=alt.datum(jd_first))
+    st.altair_chart(chart+line_min+line_max+line_verify, use_container_width=True)
 
     # correct the flux:
     lc["flux_corr"] = lc["forcediffimflux"] - lc.simple_median_baseline(jd_min, jd_max)
@@ -153,6 +171,7 @@ if uploaded_file:
 
     chart2 = base + err
 
+    st.markdown("### Final lightcurve:")
     st.altair_chart(chart2.interactive(bind_y=False), use_container_width=True)
 
     detections = band_df[~band_df.islimit]
@@ -160,19 +179,20 @@ if uploaded_file:
     csv_det = cache_download(detections)
     csv_lim = cache_download(limits)
 
-    col1, col2 = st.columns(2)
-    with col1:
-        st.download_button(
-            label="Download detections as CSV",
-            data=csv_det,
-            file_name=f'{snname}_{band}detections.csv',
-            mime='text/csv',
-        )
-    with col2:
-        st.download_button(
-            label="Download limits as CSV",
-            data=csv_lim,
-            file_name=f'{snname}_{band}limits.csv',
-            mime='text/csv',
-        )
+    st.write("---")
+    st.markdown("# Download lightcurve:")
+    snname = snname if len(snname) > 0 else "SN"
+    st.download_button(
+        label="Download detections as CSV",
+        data=csv_det,
+        file_name=f'{snname}_{band}_detections.csv',
+        mime='text/csv',
+    )
+
+    st.download_button(
+        label="Download limits as CSV",
+        data=csv_lim,
+        file_name=f'{snname}_{band}_limits.csv',
+        mime='text/csv',
+    )
 
