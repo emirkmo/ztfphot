@@ -111,7 +111,7 @@ class ZTF_LC(LC):
 
     def simple_median_baseline(self, jd_min, jd_max):
         """Use simple median between to JDs for baseline flux"""
-        return np.median(self["forcediffimflux"][(self["jd"] >= jd_min) & (self["jd"] <= jd_max)])
+        return np.nanmedian(self["forcediffimflux"][(self["jd"] >= jd_min) & (self["jd"] <= jd_max)])
 
     def RMS_baseline(self, jd_min, jd_max):
         """Use RMS between to JDs for baseline flux"""
