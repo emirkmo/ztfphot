@@ -1,4 +1,4 @@
-from .lightcurve import LC, ZTF_LC, verify_reference
+from .lightcurve import LC, ZtfLC, verify_reference
 from .readers import read_ztf_lc
 from .plot_ztffps import make_ztf_lc, plot_and_save_lc
 from .sn import SN

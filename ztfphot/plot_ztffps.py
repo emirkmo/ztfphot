@@ -2,7 +2,7 @@ from typing import Optional
 import matplotlib.pyplot as plt
 import pandas as pd
 from ztfphot.plotting import PlotType
-from ztfphot.lightcurve import ZTF_LC, LC, verify_reference
+from ztfphot.lightcurve import ZtfLC, LC, verify_reference
 from ztfphot.readers import read_ztf_lc
 from ztfphot.sn import SN
 
@@ -11,14 +11,14 @@ INPUTDIR = "tests/input/"
 OUTPUTDIR = "tests/output/"
 
 
-def make_ztf_lc(sn: SN, verify_references: bool = False) -> ZTF_LC:
+def make_ztf_lc(sn: SN, verify_references: bool = False) -> ZtfLC:
     fpath = sn.filename
     jd_first = sn.jd_first_epoch
     at = read_ztf_lc(fpath)
     if jd_first is not None and verify_references:
         at = verify_reference(at, jd_first)  # Remove references contaminated by the object
 
-    lc = ZTF_LC(at)
+    lc = ZtfLC(at)
     lc.clean_lc(scisigpix_cutoff=25)
     return lc
 
@@ -53,7 +53,7 @@ def main():
 
     plt.ion()
     phases = pd.read_json(INPUTDIR + "phase_epochs.json", typ="Series")
-    SN2020lao = SN(
+    sn2020lao = SN(
         jd_first_epoch=phases.discovery - 2,
         jd_min=2458840.0,
         jd_max=2458989.0,
@@ -61,15 +61,15 @@ def main():
         filename=INPUTDIR + "forcedphotometry_req00104849_lc.txt",
     )
 
-    SN2018ebt = SN(
+    sn2018ebt = SN(
         jd_first_epoch=2458323,
         jd_min=2458190,
         jd_max=2458313,
         snname="SN2018ebt",
         filename=INPUTDIR + "forcedphotometry_req00108452_lc.txt",
     )
-    lc = make_ztf_lc(SN2020lao, verify_references=True)
-    sn2020lao_lc = plot_and_save_lc(SN2020lao, lc)
+    lc = make_ztf_lc(sn2020lao, verify_references=True)
+    sn2020lao_lc = plot_and_save_lc(sn2020lao, lc)
     plt.show(block=True)
     return sn2020lao_lc
 
