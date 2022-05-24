@@ -6,6 +6,9 @@ from astropy.timeseries import TimeSeries
 import numpy as np
 from ztfphot.plotting import add_plot
 from abc import ABC, abstractmethod
+from typing import Protocol
+from dataclasses import dataclass
+import numpy.typing as npt
 
 
 class LC(ABC, Table):
@@ -45,6 +48,13 @@ class LC(ABC, Table):
     @abstractmethod
     def rescale_uncertainty(self):
         pass
+
+@dataclass
+class ForcedPhotTable:
+    """
+    Class to hold a table of forced photometry.
+    """
+    zp: npt.NDArray[np.float_]
 
 
 @add_plot
