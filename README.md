@@ -15,7 +15,10 @@ Currently ztfphot can:
  - Plot the magnitude or flux lightcurve in any ztfband.
 
  Upcoming:
- - Method for fetching data from IRSA.
- - Own implementation of Forced photometry compatible with ZTFFPS.
- - Interactive setting of the baseline.
- - Dynamically dealing with references that contain transient flux.
+ - [ ] Method for fetching data from IRSA.
+ - [ ] Own implementation of Forced photometry compatible with ZTFFPS.
+ - [x] Interactive setting of the baseline.
+ - [x] Dynamically dealing with references that contain transient flux.
+ - [x] Hosted (ztfphot.herokuapp.com)
+ - [ ] Alternative upper limit calculation and parameter visualizations.
+ - [ ] Allow querying ztf forced photometry service at IRSA using own credentials.
