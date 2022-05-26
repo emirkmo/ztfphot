@@ -1,11 +1,10 @@
 from typing import Optional
 
 from astropy.table import Table
-from astropy.time import Time
-from astropy.timeseries import TimeSeries
 import numpy as np
 from ztfphot.plotting import add_plot
 from abc import ABC, abstractmethod
+import pandas as pd
 
 
 class LC(ABC, Table):
@@ -48,7 +47,7 @@ class LC(ABC, Table):
 
 
 @add_plot
-class ZTF_LC(LC):
+class ZtfLC(LC):
 
     def __getattr__(self, key):
         if key in self.colnames:
@@ -94,6 +93,46 @@ class ZTF_LC(LC):
         self = self.photometric(scisigpix_cutoff) if scisigpix_cutoff else self.photometric()
         return self
 
+    def remove_non_psf_nearest_ref(self, sharp_hi=0.8, sharp_lo=-0.5, nearest_chi_limit: Optional[float] = None) -> LC:
+        """
+        Remove epochs without a suitable PSF nearest reference.
+        nearestrefsharp is a measure of the PSF of the nearest reference. This cleaning
+        should only be done if this value is around 0.
+        Closer to 1 means galaxy/extended-psf, closer to -1 means spike/sharp edge.
+        """
+
+        self = self[(self.nearestrefsharp <= sharp_hi) & (self.nearestrefsharp >= sharp_lo)]
+        if nearest_chi_limit is not None:
+            self = self[self.nearestrefchi <= nearest_chi_limit]
+        return self
+
+    def correct_flux_using_nearest_ref(self):
+        """
+        This is used to correct for reference images contaminated by transient flux.
+        Correct flux using mag of nearest reference, but this should only be done if nearestrefsharp
+        is around 0. Closer to 1 means galaxy, closer to -1 means spike/sharp edge.
+        """
+        fluxcol = "flux_corr" if "flux_corr" in self.colnames else "forcediffimflux"
+        errcol = "fluxerr_corr" if "fluxerr_corr" in self.colnames else "forcediffimfluxunc"
+
+        nearestrefflux = 10 ** (0.4 * (self.zpdiff - self.nearestrefmag))
+        # lc['flux_corr'] = lc[fluxcol] + nearestrefflux
+        corrected_flux = self[fluxcol] + nearestrefflux
+
+        nearestreffluxunc = (self.nearestrefmagunc * nearestrefflux) / 1.0857
+        term_a = self[errcol] ** 2
+        term_b = nearestreffluxunc ** 2
+        #if np.all(term_a > term_b):
+        #    # Because uncorrelated
+        new_err = np.sqrt(self[errcol] ** 2 - nearestreffluxunc ** 2)
+        #else:
+        #    # More conservative estimate if assumptions not valid
+        #    new_err = np.sqrt(lc[errcol] ** 2 + nearestreffluxunc ** 2)
+        #new_err =
+        #lc['fluxerr_corr'] = new_err
+        return corrected_flux, new_err
+
+
     def rescale_uncertainty(self):
         """Rescale uncertainty using chisq"""
         self["forcediffimfluxunc"] = self["forcediffimfluxunc"] * np.sqrt(self["forcediffimchisq"])
@@ -103,10 +142,11 @@ class ZTF_LC(LC):
         fluxcol = "flux_corr" if "flux_corr" in self.colnames else "forcediffimflux"
         errcol = "fluxerr_corr" if "fluxerr_corr" in self.colnames else "forcediffimfluxunc"
 
+        snr_tot = self[fluxcol]/self[errcol]
         self["mag"] = self["zpdiff"] - 2.5 * np.log10(self[fluxcol])
-        self["mag_err"] = 1.0857 * self[errcol] / self[fluxcol]
+        self["mag_err"] = 1.0857 / snr_tot
 
-        self["islimit"] = (self[fluxcol] / self[errcol]) < snr
+        self["islimit"] = snr_tot < snr
         self["lim"] = self["zpdiff"] - 2.5 * np.log10(snt * self[errcol])
 
     def simple_median_baseline(self, jd_min, jd_max):
@@ -145,8 +185,62 @@ def verify_reference(at: LC, jd_first: float) -> LC:
     return only_pre
 
 
-def calculate_mag_lc():
-    raise NotImplementedError()
+def remove_non_psf_nearest_ref(lc: ZtfLC, sharp_hi=0.8, sharp_lo=-0.5, nearest_chi_limit: Optional[float] = None) -> LC:
+    """
+    Remove epochs without a suitable PSF nearest reference.
+    nearestrefsharp is a measure of the PSF of the nearest reference. This cleaning
+    should only be done if this value is around 0.
+    Closer to 1 means galaxy/extended-psf, closer to -1 means spike/sharp edge.
+    """
+
+    lc = lc[(lc.nearestrefsharp <= sharp_hi) & (lc.nearestrefsharp >= sharp_lo)]
+    if nearest_chi_limit is not None:
+        lc = lc[lc.nearestrefchi <= nearest_chi_limit]
+    return lc
+
+
+def get_ref_corrected_lc(fluxtot, fluxunctot, zpdiff, SNT: int, SNU: int):
+    SNR_tot = fluxtot / fluxunctot
+    is_limit = SNR_tot < SNT
+
+    mag = zpdiff - 2.5 * np.log10(fluxtot)
+    sigma_mag = 1.0857 / SNR_tot
+
+    lim = zpdiff - 2.5 * np.log10(SNU * fluxunctot)
+    detections = mag[~is_limit]
+    limits = lim[is_limit]
+
+    #sigma_detections = sigma_mag[~is_limit]
+
+    #jd_detections = jd[~is_limit]
+    #jd_limits = jd[is_limit]
+
+    plot_mag = pd.concat((detections, limits), axis=0)
+    plot_err = sigma_mag[(~is_limit) & (sigma_mag <= 1.5)]
+    return plot_mag, plot_err, is_limit, mag, sigma_mag
+    #return detections, sigma_detections, limits, jd_detections, jd_limits
+
+
+def correct_flux_using_nearest_ref(lc: ZtfLC, fluxcol: str, errcol: str):
+    """
+    This is used to correct for reference images contaminated by transient flux.
+    Correct flux using mag of nearest reference, but this should only be done if nearestrefsharp
+    is around 0. Closer to 1 means galaxy, closer to -1 means spike/sharp edge.
+    """
+
+    nearestrefflux = 10 ** (0.4 * (lc.zpdiff - lc.nearestrefmag))
+    # lc['flux_corr'] = lc[fluxcol] + nearestrefflux
+    corrected_flux = lc[fluxcol] + nearestrefflux
+
+    nearestreffluxunc = lc.nearestrefmagunc * nearestrefflux / 1.0857
+
+    corrected_err = np.sqrt(lc[errcol] ** 2 - nearestreffluxunc ** 2)
+    # else:
+    #    # More conservative estimate if assumptions not valid
+    #    new_err = np.sqrt(lc[errcol] ** 2 + nearestreffluxunc ** 2)
+    # new_err =
+    # lc['fluxerr_corr'] = new_err
+    return corrected_flux, corrected_err
 
 
 
