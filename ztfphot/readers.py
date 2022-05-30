@@ -48,7 +48,7 @@ def convert_to_numeric(at: Table) -> Table:
         "forcediffimsnrap",
         "aperturecorr",
         "nearestrefsharp",
-        "nearestrefflux",
+        "nearestrefmag",
         "nearestrefchi",
     ]
     for col in force_cols:
