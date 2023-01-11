@@ -5,6 +5,8 @@ import altair as alt
 import numpy as np
 import pandas as pd
 
+from ztfphot.lightcurve import correct_flux_using_nearest_ref, get_ref_corrected_lc
+
 st.set_page_config(page_title="ZTFphot: ZTF Forced Photometry lightcurve tool", page_icon=":telescope:", layout="wide")
 
 
@@ -150,33 +152,50 @@ if uploaded_file:
     if str(reference_option).startswith("Verify"):
         line_verify = alt.Chart(lc.to_pandas()).mark_rule(color='yellow').encode(x=alt.datum(jd_first))
         st.altair_chart(chart+line_min+line_max+line_verify, use_container_width=True)
-    st.altair_chart(chart + line_min + line_max, use_container_width=True)
+    else:
+        st.altair_chart(chart + line_min + line_max, use_container_width=True)
 
     # correct the flux:
     lc["flux_corr"] = lc["forcediffimflux"] - lc.simple_median_baseline(jd_min, jd_max)
     st.write("---")
     if "rescale uncertainty" in steps:
+        #rescaled = st.session_state.get(f"rescaled_{band}", None)
+        #if rescaled is None:
         lc.rescale_uncertainty()
+        #st.session_state[f"rescaled_{band}"] = True
         RMS = lc.RMS_baseline(jd_min, jd_max)
         if RMS >= 1.01:
             lc["fluxerr_corr"] = lc["forcediffimfluxunc"] * RMS
 
     # Get the corrected flux into flux_corr and fluxerr_corr
     if str(reference_option).startswith("Correct"):
-        st.text("correct!")
-        new_flux, new_err = lc.correct_flux_using_nearest_ref()
+        errcol = "fluxerr_corr" if "fluxerr_corr" in lc.colnames else "forcediffimfluxunc"
+        fluxcol = "flux_corr" if "flux_corr" in lc.colnames else "forcediffimflux"
+        corr_flux, corr_err = correct_flux_using_nearest_ref(lc, "forcediffimflux", errcol)
 
     col1, col2 = st.columns(2)
     with col1:
         snr = st.slider(label="SNR limit threshold", min_value=1, max_value=10, value=3, step=1)
     with col2:
         snt = st.slider(label="Limit sigma (default 5)", min_value=1, max_value=15, value=5, step=1)
-    lc.get_mag_lc(snr=snr, snt=snt)
 
-
+    if str(reference_option).startswith("Verify"):
+        lc.get_mag_lc(snr=snr, snt=snt)
     band_df = lc.to_pandas()
-    band_df['plot_mag'] = pd.concat((band_df.mag[~band_df.islimit], band_df.lim[band_df.islimit]), axis=0)
-    band_df['plot_err'] = band_df.mag_err[(~band_df.islimit) & (band_df.mag_err <= 1.5)]
+    if str(reference_option).startswith("Verify"):
+        lc.get_mag_lc(snr=snr, snt=snt)
+        band_df['plot_mag'] = pd.concat((band_df.mag[~band_df.islimit], band_df.lim[band_df.islimit]), axis=0)
+        band_df['plot_err'] = band_df.mag_err[(~band_df.islimit) & (band_df.mag_err <= 1.5)]
+    if str(reference_option).startswith("Correct"):
+        band_df['corr_flux'] = corr_flux
+        band_df['corr_err'] = corr_err
+        plot_mag, plot_err, is_limit, mag, mag_err = get_ref_corrected_lc(band_df.corr_flux, band_df.corr_err, band_df.zpdiff,
+                                                  SNT=snr, SNU=snt)
+        band_df['mag'] = mag
+        band_df['mag_err'] = mag_err
+        band_df['plot_mag'] = plot_mag
+        band_df['plot_err'] = plot_err
+        band_df['islimit'] = is_limit
 
     # annoying explicit domain setting because altair sometimes breaks and resets to zero anyway.
     ymin = max(band_df.plot_mag.dropna().min() - 0.7, 0)
@@ -186,14 +205,14 @@ if uploaded_file:
         alt.YError('plot_err', band=1),
         color=alt.Color('islimit'),
         shape=alt.Shape('islimit', scale=alt.Scale(range=['circle', 'triangle'])),
-        tooltip=['jd', 'mag', 'mag_err', 'islimit']
+        tooltip=['jd', 'mag', 'mag_err', 'islimit', 'scisigpix', 'sciinpseeing', 'procstatus']
     )
 
     err = alt.Chart(band_df).mark_errorbar(clip=True, color='lightblue').encode(
         alt.X('jd', scale=alt.Scale(zero=False)),
         alt.Y('plot_mag', scale=alt.Scale(reverse=True, zero=False, domainMin=ymin)),
         alt.YError('plot_err', band=1),
-        tooltip=['jd', 'mag', 'mag_err', 'islimit']
+        tooltip=['jd', 'mag', 'mag_err', 'islimit', 'scisigpix', 'sciinpseeing', 'procstatus']
     )
 
     chart2 = base + err
